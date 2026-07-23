@@ -13,3 +13,12 @@ cmds:
 
 **Scrim Handling**
 - ,scrim
+
+**Music Player**
+- ,play
+- ,queue
+- ,skip
+- ,pause
+- ,resume
+- ,join
+- ,disconnect

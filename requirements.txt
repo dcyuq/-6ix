@@ -1,2 +1,5 @@
 discord.py
+discord.py[voice]
+pyNaCl
 python-dotenv
+yt-dlp

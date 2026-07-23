@@ -1,7 +1,7 @@
-import discord 
-from discord.ext import commands 
+import discord
+from discord.ext import commands
 import yt_dlp
-import asyncio 
+import asyncio
 
 FFMPEG_PATH= r"D:\projects (code)\!6\bin\ffmpeg.exe"
 
@@ -84,7 +84,14 @@ class Music(commands.Cog):
         vc.play(source, after=after)
         await ctx.send(f"Now playing: **{track['title']}**")
 
-    @commands.command()
+    @commands.command(aliases=['connect'])
+    async def join(self, ctx):
+        vc = await self.ensure_voice(ctx)
+        if vc is None:
+            return  # ensure_voice already told them they're not in a VC
+        await ctx.send(f"Joined **{vc.channel.name}**.")
+
+    @commands.command(aliases=['p'])
     async def play(self, ctx, *, query):
         vc = await self.ensure_voice(ctx)
         if vc is None:
@@ -98,7 +105,7 @@ class Music(commands.Cog):
         else:
             await ctx.send(f"Added to queue: **{track['title']}**")
 
-    @commands.command()
+    @commands.command(aliases=['s'])
     async def skip(self, ctx):
         vc = ctx.voice_client
         if vc and (vc.is_playing() or vc.is_paused()):
@@ -108,7 +115,7 @@ class Music(commands.Cog):
         else:
             await ctx.send("Nothing is playing.")
 
-    @commands.command()
+    @commands.command(aliases=['q'])
     async def queue(self, ctx):
         state = self.get_state(ctx.guild.id)
         if not state.queue and not state.current:
@@ -151,7 +158,7 @@ class Music(commands.Cog):
             ctx.voice_client.stop()
         await ctx.send("Stopped and cleared the queue.")
 
-    @commands.command()
+    @commands.command(aliases=['disconnect', 'dc'])
     async def leave(self, ctx):
         if ctx.voice_client:
             await ctx.voice_client.disconnect()
