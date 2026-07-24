@@ -81,7 +81,6 @@ class GamePass(commands.Cog):
         link = GAMEPASS_LINK.format(id=gp_id)
 
         description = (
-            f"-# {SCANNER_LABEL} *!*\n"
             f"-# {DIVIDER}\n"
             f" **{price_text}**\n"
             f"-# ╰   you will receive {SEP} {net_text}\n"
