@@ -3,3 +3,4 @@ discord.py[voice]
 pyNaCl
 python-dotenv
 yt-dlp
+imageio-ffmpeg
