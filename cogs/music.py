@@ -2,8 +2,16 @@ import discord
 from discord.ext import commands
 import yt_dlp
 import asyncio
+import os
 
-FFMPEG_PATH= r"D:\projects (code)\!6\bin\ffmpeg.exe"
+
+try:
+    import imageio_ffmpeg
+    FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
+except Exception:
+    FFMPEG_PATH = "ffmpeg"  # fall back to system ffmpeg if available
+
+COOKIES_FILE = "cookies.txt"
 
 YTDL_OPTIONS = {
     'format': 'bestaudio/best',
@@ -12,6 +20,10 @@ YTDL_OPTIONS = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
 }
+
+
+if os.path.isfile(COOKIES_FILE):
+    YTDL_OPTIONS['cookiefile'] = COOKIES_FILE
 
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -88,7 +100,7 @@ class Music(commands.Cog):
     async def join(self, ctx):
         vc = await self.ensure_voice(ctx)
         if vc is None:
-            return  # ensure_voice already told them they're not in a VC
+            return 
         await ctx.send(f"Joined **{vc.channel.name}**.")
 
     @commands.command(aliases=['p'])
