@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 
+
 class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
     def __init__(self, channel: discord.TextChannel):
         super().__init__()
@@ -12,6 +13,7 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
         style=discord.TextStyle.paragraph,
         required=True,
     )
+
     team_count = discord.ui.TextInput(
         label="Team count",
         placeholder="e.g. 4",
@@ -23,11 +25,17 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
         try:
             count = int(self.team_count.value)
         except ValueError:
-            await interaction.response.send_message("Team count must be a number.", ephemeral=True)
+            await interaction.response.send_message(
+                "Team count must be a number.",
+                ephemeral=True
+            )
             return
 
         if count < 1 or count > 20:
-            await interaction.response.send_message("Team count must be between 1 and 20.", ephemeral=True)
+            await interaction.response.send_message(
+                "Team count must be between 1 and 20.",
+                ephemeral=True
+            )
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -42,8 +50,10 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
             await team_message.create_thread(name=f"team {i}")
 
         await interaction.followup.send(
-            f"Created {count} scrim thread(s) in {self.channel.mention}.", ephemeral=True
+            f"Created {count} scrim thread(s) in {self.channel.mention}.",
+            ephemeral=True
         )
+
 
 class ScrimView(discord.ui.View):
     def __init__(self):
@@ -57,18 +67,40 @@ class ScrimView(discord.ui.View):
         min_values=1,
         max_values=1,
     )
-    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+    async def channel_select(
+        self,
+        interaction: discord.Interaction,
+        select: discord.ui.ChannelSelect
+    ):
         self.selected_channel = select.values[0]
         await interaction.response.defer()
 
     @discord.ui.button(label="Create Scrim", style=discord.ButtonStyle.primary)
-    async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def create_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
         if self.selected_channel is None:
-            await interaction.response.send_message("Pick a channel first.", ephemeral=True)
+            await interaction.response.send_message(
+                "Pick a channel first.",
+                ephemeral=True
+            )
             return
 
         channel = interaction.guild.get_channel(self.selected_channel.id)
+
+        permissions = channel.permissions_for(interaction.guild.me)
+
+        if not permissions.create_public_threads:
+            await interaction.response.send_message(
+                "I don't have permission to create threads in that channel.",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.send_modal(ScrimModal(channel))
+
 
 class Scrims(commands.Cog):
     def __init__(self, bot):
@@ -76,10 +108,18 @@ class Scrims(commands.Cog):
 
     @commands.command()
     async def scrim(self, ctx):
+
+        if not ctx.author.guild_permissions.create_public_threads:
+            await ctx.send(
+                "You need the **Create Public Threads** permission to use this command."
+            )
+            return
+
         await ctx.send(
             "To create a scrim, pick a channel and click the button below",
             view=ScrimView(),
         )
+
 
 async def setup(bot):
     await bot.add_cog(Scrims(bot))
