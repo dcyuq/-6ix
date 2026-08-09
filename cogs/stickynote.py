@@ -3,19 +3,6 @@ from discord.ext import commands
 import json
 import os
 
-# ==========================
-# PERSISTENT STORAGE
-# ==========================
-# Notes are stored per-guild in a JSON file so they survive bot restarts.
-# Structure on disk / in memory:
-# {
-#   "<guild_id>": {
-#       "<trigger>": {"message": "...", "creator": "<mention>"},
-#       ...
-#   },
-#   ...
-# }
-
 DATA_FILE = "stickynotes.json"
 
 
@@ -35,11 +22,6 @@ def save_data(data):
 
 
 sticky_notes = load_data()
-
-# Which note is "bumping" in a given channel right now.
-# Not persisted to disk on purpose - a restart just means bumping
-# pauses in that channel until someone triggers a sticky note again.
-# {channel_id: {"trigger": "<name>", "message_id": <int>}}
 active_stickies = {}
 
 
@@ -58,10 +40,6 @@ def can_manage(member: discord.Member) -> bool:
     perms = member.guild_permissions
     return perms.administrator or perms.manage_messages
 
-
-# ==========================
-# CREATE MODAL
-# ==========================
 
 class StickyCreateModal(discord.ui.Modal, title="Create Sticky Note"):
 
@@ -107,10 +85,6 @@ class StickyCreateModal(discord.ui.Modal, title="Create Sticky Note"):
             f"Sticky note `{name}` created.", ephemeral=True
         )
 
-
-# ==========================
-# EDIT MODAL
-# ==========================
 
 class StickyEditModal(discord.ui.Modal):
 
@@ -168,10 +142,6 @@ class StickyEditModal(discord.ui.Modal):
         )
 
 
-# ==========================
-# VIEW DROPDOWN (browse notes)
-# ==========================
-
 class StickyViewSelect(discord.ui.Select):
 
     def __init__(self, guild_id):
@@ -215,10 +185,6 @@ class StickyViewSelectView(discord.ui.View):
         self.add_item(StickyViewSelect(guild_id))
 
 
-# ==========================
-# EDIT DROPDOWN (pick note -> modal)
-# ==========================
-
 class StickyEditSelect(discord.ui.Select):
 
     def __init__(self, guild_id):
@@ -256,10 +222,6 @@ class StickyEditSelectView(discord.ui.View):
         super().__init__(timeout=120)
         self.add_item(StickyEditSelect(guild_id))
 
-
-# ==========================
-# DELETE DROPDOWN
-# ==========================
 
 class StickyDeleteSelect(discord.ui.Select):
 
@@ -301,10 +263,6 @@ class StickyDeleteSelectView(discord.ui.View):
         super().__init__(timeout=120)
         self.add_item(StickyDeleteSelect(guild_id))
 
-
-# ==========================
-# MAIN PANEL (View / Create / Edit / Delete buttons)
-# ==========================
 
 class StickyPanelView(discord.ui.View):
 
@@ -376,11 +334,6 @@ class StickyPanelView(discord.ui.View):
             view=StickyDeleteSelectView(self.guild_id)
         )
 
-
-# ==========================
-# MAIN COG
-# ==========================
-
 class StickyNotes(commands.Cog):
 
     def __init__(self, bot):
@@ -427,9 +380,6 @@ class StickyNotes(commands.Cog):
         await self._clear_active(ctx.channel)
         await ctx.send("Sticky note removed from this channel.")
 
-    # ==========================
-    # STICKY NOTE TRIGGER
-    # ==========================
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -439,7 +389,6 @@ class StickyNotes(commands.Cog):
         notes = get_guild_notes(message.guild.id)
         channel_id = message.channel.id
 
-        # Is this message a ,(trigger) call that starts/replaces a sticky?
         if message.content.startswith(","):
             command = normalize_name(message.content[1:])
 
@@ -452,8 +401,6 @@ class StickyNotes(commands.Cog):
                 except (discord.Forbidden, discord.NotFound):
                     pass
 
-                # A previous sticky may already be bumping in this channel -
-                # clear it out before posting the new one.
                 await self._clear_active(message.channel)
 
                 sent = await message.channel.send(notes[command]["message"])
@@ -463,8 +410,7 @@ class StickyNotes(commands.Cog):
                 }
                 return
 
-        # Otherwise: if this channel has an active sticky, bump it -
-        # delete the old sticky post and repost it at the bottom.
+
         active = active_stickies.get(channel_id)
         if active is None:
             return
