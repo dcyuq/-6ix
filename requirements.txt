@@ -1,0 +1,7 @@
+discord.py>=2.6.0
+discord.py[voice]
+PyNaCl
+python-dotenv
+yt-dlp
+imageio-ffmpeg
+aiohttp
