@@ -43,6 +43,12 @@ async def on_ready():
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
+
+    if ctx.command is not None and ctx.command.has_error_handler():
+        return
+    if ctx.cog is not None and ctx.cog.has_error_handler():
+        return
+
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(f"Missing argument: `{error.param.name}`")
         return

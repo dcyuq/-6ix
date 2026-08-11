@@ -6,12 +6,15 @@ ACCENT = discord.Color.dark_theme()
 
 CATEGORY_META = {
     "Moderation": "Kick, ban and timeout members.",
-    "Music": "Play audio in a voice channel.",
     "Scrims": "Generate scrim threads for team matches.",
     "StickyNotes": "Keep a message pinned to the bottom of a channel.",
     "AutoResponder": "Auto-reply to trigger words.",
     "GamePass": "Look up Roblox gamepass prices.",
     "Vanity": "Award a role for a keyword in someone's status.",
+    "Tickets": "Private support tickets with a custom panel and logging.",
+    "Send": "Post a message or embed to a channel as the bot.",
+    "Purge": "Bulk delete messages, optionally filtered.",
+    "Help": "This menu.",
 }
 
 COMMAND_HELP = {
@@ -20,15 +23,6 @@ COMMAND_HELP = {
     "unban": "Lift a ban by user ID.",
     "timeout": "Mute a member for a number of minutes.",
     "untimeout": "End a member's timeout early.",
-    "join": "Bring the bot into your voice channel.",
-    "play": "Queue a track by search term or URL.",
-    "skip": "Skip the current track.",
-    "queue": "Show what's queued up.",
-    "loop": "Toggle repeating the current track.",
-    "pause": "Pause playback.",
-    "resume": "Resume playback.",
-    "stop": "Stop playback and clear the queue.",
-    "leave": "Disconnect from voice.",
     "scrim": "Open the scrim thread generator.",
     "stickynote": "Open the sticky note panel.",
     "unsticky": "Remove the active sticky in this channel.",
@@ -36,11 +30,36 @@ COMMAND_HELP = {
     "gamepass": "Look up a Roblox gamepass and its payout.",
     "vanity": "Configure the vanity status role.",
     "unvanity": "Disable the vanity status role.",
+    "ticketsetup": "Set up or reconfigure the ticket system.",
+    "ticketstats": "Show open, unclaimed and lifetime ticket counts.",
+    "send": "Post a message or embed to a channel as the bot.",
+    "purge": "Bulk delete messages in this channel.",
+    "purgehelp": "Show the purge filters and examples.",
+    "help": "Show this menu.",
+}
+
+SUBCOMMAND_HELP = {
+    "ticketsetup fast": "Quick setup with one default button.",
+    "ticketsetup custom": "Full builder, starting empty.",
+    "ticketsetup edit": "Reopen the builder on an existing setup.",
 }
 
 
 def describe(command) -> str:
-    return command.help or COMMAND_HELP.get(command.name, "No description yet.")
+    if command.help:
+        return command.help
+    qualified = SUBCOMMAND_HELP.get(command.qualified_name)
+    if qualified:
+        return qualified
+    return COMMAND_HELP.get(command.name, "No description yet.")
+
+
+def subcommands_of(command):
+    if not isinstance(command, commands.Group):
+        return []
+    return sorted(
+        (c for c in command.commands if not c.hidden), key=lambda c: c.name
+    )
 
 
 def usage(command) -> str:
@@ -101,9 +120,18 @@ def category_embed(cog_name, cmds):
         aliases = ""
         if command.aliases:
             aliases = " | " + " ".join(f"`{a}`" for a in command.aliases)
+
+        value = describe(command)
+        subs = subcommands_of(command)
+        if subs:
+            listed = "\n".join(
+                f"`{PREFIX}{s.qualified_name}` - {describe(s)}" for s in subs
+            )
+            value = f"{value}\n{listed}"
+
         embed.add_field(
             name=f"`{usage(command)}`{aliases}",
-            value=describe(command),
+            value=value,
             inline=False,
         )
 
@@ -123,6 +151,16 @@ def command_embed(command):
         embed.add_field(
             name="Aliases",
             value=" ".join(f"`{PREFIX}{a}`" for a in command.aliases),
+            inline=False,
+        )
+
+    subs = subcommands_of(command)
+    if subs:
+        embed.add_field(
+            name="Subcommands",
+            value="\n".join(
+                f"`{PREFIX}{s.qualified_name}` - {describe(s)}" for s in subs
+            ),
             inline=False,
         )
 
