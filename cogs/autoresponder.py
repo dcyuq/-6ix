@@ -1,10 +1,8 @@
 import discord
 from discord.ext import commands
-import json
-import os
+from storage import Store
 
-
-DATA_FILE = "autoresponders.json"
+_store = Store("autoresponders.json")
 
 MATCH_MODES = [
     ("exact", "Exact Match", "Message must match the trigger exactly"),
@@ -16,18 +14,11 @@ MATCH_MODE_LABELS = {key: label for key, label, _ in MATCH_MODES}
 
 
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+    return _store.load()
 
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _store.save(data)
 
 
 responders = load_data()

@@ -34,3 +34,9 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+data/
+stickynotes.json
+autoresponders.json
+active_stickies.json
+vanity.json

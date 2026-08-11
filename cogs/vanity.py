@@ -1,26 +1,18 @@
 import discord
 from discord.ext import commands, tasks
-import json
-import os
+from storage import Store
 
-DATA_FILE = "vanity.json"
+_store = Store("vanity.json")
 
 SWEEP_MINUTES = 10
 
 
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+    return _store.load()
 
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _store.save(data)
 
 
 config = load_data()
@@ -70,6 +62,7 @@ def check_role_assignable(role: discord.Role, actor: discord.Member) -> str | No
             "That role is above me in the hierarchy. Move my role higher in "
             "Server Settings first."
         )
+
     if actor.id != guild.owner_id and role >= actor.top_role:
         return (
             "That role is at or above your own highest role, so you can't "
@@ -225,7 +218,7 @@ class Vanity(commands.Cog):
             return
 
         should_have = has_keyword(member, settings["keyword"])
-        currently_has = role in member.roles  # cached, no API call
+        currently_has = role in member.roles
 
         if should_have and not currently_has:
             try:
@@ -237,6 +230,7 @@ class Vanity(commands.Cog):
                 await member.remove_roles(role, reason="Vanity keyword removed")
             except (discord.Forbidden, discord.HTTPException):
                 pass
+
 
     @commands.Cog.listener()
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
@@ -266,6 +260,7 @@ class Vanity(commands.Cog):
     @sweep.before_loop
     async def before_sweep(self):
         await self.bot.wait_until_ready()
+
 
     async def cog_check(self, ctx):
         """Gate every command in this cog behind Administrator / Manage Roles."""
@@ -298,8 +293,8 @@ class Vanity(commands.Cog):
             role = ctx.guild.get_role(settings["role_id"])
             role_text = role.mention if role else "*deleted role*"
             description = (
-                f"**Keyword** ㆍ `{settings['keyword']}`\n"
-                f"**Role** ㆍ {role_text}\n\n"
+                f"**Keyword** - `{settings['keyword']}`\n"
+                f"**Role** - {role_text}\n\n"
                 "Pick a role below to reconfigure."
             )
 
