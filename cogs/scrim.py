@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 
+MAX_TEAMS = 20
+
 
 class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
     def __init__(self, channel: discord.TextChannel):
@@ -12,6 +14,7 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
         placeholder="e.g. cezu scrims!",
         style=discord.TextStyle.paragraph,
         required=True,
+        max_length=1000,
     )
 
     team_count = discord.ui.TextInput(
@@ -31,34 +34,93 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
             )
             return
 
-        if count < 1 or count > 20:
+        if count < 1 or count > MAX_TEAMS:
             await interaction.response.send_message(
-                "Team count must be between 1 and 20.",
+                f"Team count must be between 1 and {MAX_TEAMS}.",
+                ephemeral=True
+            )
+            return
+
+        if not interaction.user.guild_permissions.create_public_threads:
+            await interaction.response.send_message(
+                "You no longer have permission to do that.",
+                ephemeral=True
+            )
+            return
+
+        permissions = self.channel.permissions_for(interaction.guild.me)
+        if not permissions.send_messages or not permissions.create_public_threads:
+            await interaction.response.send_message(
+                "I can't post or create threads in that channel anymore.",
                 ephemeral=True
             )
             return
 
         await interaction.response.defer(ephemeral=True)
 
-        await self.channel.send(
-            self.description.value,
-            allowed_mentions=discord.AllowedMentions(everyone=True),
-        )
+        try:
+            await self.channel.send(
+                self.description.value,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
-        for i in range(1, count + 1):
-            team_message = await self.channel.send(f"``team {i}``")
-            await team_message.create_thread(name=f"team {i}")
+            created = 0
+            for i in range(1, count + 1):
+                team_message = await self.channel.send(f"``team {i}``")
+                await team_message.create_thread(name=f"team {i}")
+                created += 1
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "I lost permission partway through. "
+                f"Created {created} thread(s) before stopping.",
+                ephemeral=True
+            )
+            return
+        except discord.HTTPException as exc:
+            await interaction.followup.send(
+                f"Discord rejected a request after {created} thread(s): {exc}",
+                ephemeral=True
+            )
+            return
 
         await interaction.followup.send(
-            f"Created {count} scrim thread(s) in {self.channel.mention}.",
+            f"Created {created} scrim thread(s) in {self.channel.mention}.",
             ephemeral=True
         )
 
 
 class ScrimView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, author_id: int):
         super().__init__(timeout=120)
+        self.author_id = author_id
         self.selected_channel = None
+        self.message = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Run `,scrim` yourself to use this panel.",
+                ephemeral=True
+            )
+            return False
+
+        if not interaction.user.guild_permissions.create_public_threads:
+            await interaction.response.send_message(
+                "You need the **Create Public Threads** permission.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -90,7 +152,29 @@ class ScrimView(discord.ui.View):
 
         channel = interaction.guild.get_channel(self.selected_channel.id)
 
+        if channel is None:
+            await interaction.response.send_message(
+                "That channel no longer exists.",
+                ephemeral=True
+            )
+            return
+
+        author_perms = channel.permissions_for(interaction.user)
+        if not author_perms.send_messages:
+            await interaction.response.send_message(
+                "You can't post in that channel.",
+                ephemeral=True
+            )
+            return
+
         permissions = channel.permissions_for(interaction.guild.me)
+
+        if not permissions.send_messages:
+            await interaction.response.send_message(
+                "I can't send messages in that channel.",
+                ephemeral=True
+            )
+            return
 
         if not permissions.create_public_threads:
             await interaction.response.send_message(
@@ -107,18 +191,22 @@ class Scrims(commands.Cog):
         self.bot = bot
 
     @commands.command()
+    @commands.guild_only()
+    @commands.cooldown(1, 30, commands.BucketType.user)
     async def scrim(self, ctx):
-
         if not ctx.author.guild_permissions.create_public_threads:
             await ctx.send(
                 "You need the **Create Public Threads** permission to use this command."
             )
             return
 
-        await ctx.send(
+        view = ScrimView(ctx.author.id)
+        message = await ctx.send(
             "To create a scrim, pick a channel and click the button below",
-            view=ScrimView(),
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
         )
+        view.message = message
 
 
 async def setup(bot):

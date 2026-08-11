@@ -1,29 +1,92 @@
 import discord
 from discord.ext import commands
 import logging
+from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 import asyncio
 
+ROOT = Path(__file__).resolve().parent
+COGS_DIR = ROOT / "cogs"
+
 load_dotenv()
-token = os.getenv('DISCORD_TOKEN')
+token = os.getenv("DISCORD_TOKEN")
 
-handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=',', intents=intents)
+handler = RotatingFileHandler(
+    filename=ROOT / "discord.log",
+    encoding="utf-8",
+    maxBytes=2 * 1024 * 1024,
+    backupCount=2,
+)
 
-# test
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.presences = True
+
+bot = commands.Bot(
+    command_prefix=",",
+    intents=intents,
+    allowed_mentions=discord.AllowedMentions(
+        everyone=False, roles=False, users=True
+    ),
+)
+
 
 @bot.event
 async def on_ready():
-    print(f"I am online!")
+    print(f"Online as {bot.user} in {len(bot.guilds)} guild(s)")
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"Missing argument: `{error.param.name}`")
+        return
+    if isinstance(error, (commands.MissingPermissions, commands.CheckFailure)):
+        await ctx.send("You don't have permission to use that.")
+        return
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"Slow down, try again in {error.retry_after:.0f}s.")
+        return
+
+    await ctx.send(f"`{type(error).__name__}: {error}`")
+    raise error
+
+
+async def load_cogs():
+    loaded, failed = 0, 0
+
+    for path in sorted(COGS_DIR.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        try:
+            await bot.load_extension(f"cogs.{path.stem}")
+            print(f"  loaded  {path.name}")
+            loaded += 1
+        except Exception as exc:
+            print(f"  FAILED  {path.name}: {type(exc).__name__}: {exc}")
+            failed += 1
+
+    print(f"Cogs: {loaded} loaded, {failed} failed")
+
 
 async def main():
+    if not token:
+        print("DISCORD_TOKEN is missing. Check your .env file.")
+        return
+
     async with bot:
-        discord.utils.setup_logging(handler=handler, level=logging.DEBUG)
-        for filename in os.listdir('./cogs'):
-            if filename.endswith('.py'):
-                await bot.load_extension(f'cogs.{filename[:-3]}')
+        discord.utils.setup_logging(handler=handler, level=logging.INFO)
+        await load_cogs()
         await bot.start(token)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Shutting down.")
