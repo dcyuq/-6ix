@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 from storage import Store, IntKeyStore
+from prefixes import prefix_for
 
 _store = Store("stickynotes.json")
 _active_store = IntKeyStore("active_stickies.json")
@@ -461,8 +462,10 @@ class StickyNotes(commands.Cog):
         notes = get_guild_notes(message.guild.id)
         channel_id = message.channel.id
 
-        if message.content.startswith(","):
-            command = normalize_name(message.content[1:])
+        prefix = prefix_for(message.guild.id)
+
+        if message.content.startswith(prefix):
+            command = normalize_name(message.content[len(prefix):])
 
             if command in notes:
                 if not can_manage(message.author):

@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
+from prefixes import prefix_for
 
-PREFIX = ","
 ACCENT = discord.Color.dark_theme()
 
 CATEGORY_META = {
@@ -14,6 +14,7 @@ CATEGORY_META = {
     "Tickets": "Private support tickets with a custom panel and logging.",
     "Send": "Post a message or embed to a channel as the bot.",
     "Purge": "Bulk delete messages, optionally filtered.",
+    "Prefix": "View or change the command prefix for this server.",
     "Help": "This menu.",
 }
 
@@ -35,6 +36,7 @@ COMMAND_HELP = {
     "send": "Post a message or embed to a channel as the bot.",
     "purge": "Bulk delete messages in this channel.",
     "purgehelp": "Show the purge filters and examples.",
+    "prefix": "Show the current command prefix.",
     "help": "Show this menu.",
 }
 
@@ -42,6 +44,8 @@ SUBCOMMAND_HELP = {
     "ticketsetup fast": "Quick setup with one default button.",
     "ticketsetup custom": "Full builder, starting empty.",
     "ticketsetup edit": "Reopen the builder on an existing setup.",
+    "prefix set": "Change the prefix for this server.",
+    "prefix reset": "Go back to the default prefix.",
 }
 
 
@@ -62,9 +66,9 @@ def subcommands_of(command):
     )
 
 
-def usage(command) -> str:
+def usage(command, prefix) -> str:
     sig = command.signature
-    return f"{PREFIX}{command.qualified_name} {sig}".strip()
+    return f"{prefix}{command.qualified_name} {sig}".strip()
 
 
 async def visible_commands(cog, ctx):
@@ -82,13 +86,13 @@ async def visible_commands(cog, ctx):
     return sorted(out, key=lambda c: c.name)
 
 
-def home_embed(bot, ctx, categories):
+def home_embed(bot, ctx, categories, prefix):
     embed = discord.Embed(
         title="Command Help",
         description=(
-            f"Prefix is `{PREFIX}`\n"
+            f"Prefix is `{prefix}`\n"
             f"Use the menu below to browse a category, or "
-            f"`{PREFIX}help <command>` for details on one command."
+            f"`{prefix}help <command>` for details on one command."
         ),
         color=ACCENT,
     )
@@ -108,7 +112,7 @@ def home_embed(bot, ctx, categories):
     return embed
 
 
-def category_embed(cog_name, cmds):
+def category_embed(cog_name, cmds, prefix):
     blurb = CATEGORY_META.get(cog_name, "")
     embed = discord.Embed(
         title=cog_name,
@@ -125,12 +129,12 @@ def category_embed(cog_name, cmds):
         subs = subcommands_of(command)
         if subs:
             listed = "\n".join(
-                f"`{PREFIX}{s.qualified_name}` - {describe(s)}" for s in subs
+                f"`{prefix}{s.qualified_name}` - {describe(s)}" for s in subs
             )
             value = f"{value}\n{listed}"
 
         embed.add_field(
-            name=f"`{usage(command)}`{aliases}",
+            name=f"`{usage(command, prefix)}`{aliases}",
             value=value,
             inline=False,
         )
@@ -139,18 +143,18 @@ def category_embed(cog_name, cmds):
     return embed
 
 
-def command_embed(command):
+def command_embed(command, prefix):
     embed = discord.Embed(
-        title=f"{PREFIX}{command.qualified_name}",
+        title=f"{prefix}{command.qualified_name}",
         description=describe(command),
         color=ACCENT,
     )
-    embed.add_field(name="Usage", value=f"`{usage(command)}`", inline=False)
+    embed.add_field(name="Usage", value=f"`{usage(command, prefix)}`", inline=False)
 
     if command.aliases:
         embed.add_field(
             name="Aliases",
-            value=" ".join(f"`{PREFIX}{a}`" for a in command.aliases),
+            value=" ".join(f"`{prefix}{a}`" for a in command.aliases),
             inline=False,
         )
 
@@ -159,7 +163,7 @@ def command_embed(command):
         embed.add_field(
             name="Subcommands",
             value="\n".join(
-                f"`{PREFIX}{s.qualified_name}` - {describe(s)}" for s in subs
+                f"`{prefix}{s.qualified_name}` - {describe(s)}" for s in subs
             ),
             inline=False,
         )
@@ -170,8 +174,9 @@ def command_embed(command):
 
 
 class HelpSelect(discord.ui.Select):
-    def __init__(self, categories):
+    def __init__(self, categories, prefix):
         self.categories = categories
+        self.prefix = prefix
 
         options = [
             discord.SelectOption(
@@ -195,26 +200,27 @@ class HelpSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "__home__":
             embed = home_embed(
-                interaction.client, self.view.ctx, self.categories
+                interaction.client, self.view.ctx, self.categories, self.prefix
             )
         else:
             name = self.values[0]
-            embed = category_embed(name, self.categories[name])
+            embed = category_embed(name, self.categories[name], self.prefix)
 
         await interaction.response.edit_message(embed=embed, view=self.view)
 
 
 class HelpView(discord.ui.View):
-    def __init__(self, ctx, categories):
+    def __init__(self, ctx, categories, prefix):
         super().__init__(timeout=180)
         self.ctx = ctx
+        self.prefix = prefix
         self.message = None
-        self.add_item(HelpSelect(categories))
+        self.add_item(HelpSelect(categories, prefix))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.ctx.author.id:
             await interaction.response.send_message(
-                f"Run `{PREFIX}help` yourself to use this menu.", ephemeral=True
+                f"Run `{self.prefix}help` yourself to use this menu.", ephemeral=True
             )
             return False
         return True
@@ -236,14 +242,20 @@ class Help(commands.Cog):
 
     @commands.command(name="help", aliases=["h", "commands"])
     async def help_command(self, ctx: commands.Context, *, query: str = None):
+        prefix = prefix_for(ctx.guild.id if ctx.guild else None)
+
         if query:
-            command = self.bot.get_command(query.lstrip(PREFIX).strip())
+            wanted = query.strip()
+            if wanted.startswith(prefix):
+                wanted = wanted[len(prefix):]
+
+            command = self.bot.get_command(wanted.strip())
             if command is None or command.hidden:
                 await ctx.send(
-                    f"No command called `{query}`. Try `{PREFIX}help`."
+                    f"No command called `{query}`. Try `{prefix}help`."
                 )
                 return
-            await ctx.send(embed=command_embed(command))
+            await ctx.send(embed=command_embed(command, prefix))
             return
 
         categories = {}
@@ -256,9 +268,9 @@ class Help(commands.Cog):
 
         categories = dict(sorted(categories.items()))
 
-        view = HelpView(ctx, categories)
+        view = HelpView(ctx, categories, prefix)
         message = await ctx.send(
-            embed=home_embed(self.bot, ctx, categories),
+            embed=home_embed(self.bot, ctx, categories, prefix),
             view=view,
             allowed_mentions=discord.AllowedMentions.none(),
         )

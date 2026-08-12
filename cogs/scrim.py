@@ -4,6 +4,11 @@ from discord.ext import commands
 MAX_TEAMS = 20
 
 
+def can_manage(member: discord.Member) -> bool:
+    perms = member.guild_permissions
+    return perms.administrator or perms.manage_messages
+
+
 class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
     def __init__(self, channel: discord.TextChannel):
         super().__init__()
@@ -41,7 +46,7 @@ class ScrimModal(discord.ui.Modal, title="Scrim Setup"):
             )
             return
 
-        if not interaction.user.guild_permissions.create_public_threads:
+        if not can_manage(interaction.user):
             await interaction.response.send_message(
                 "You no longer have permission to do that.",
                 ephemeral=True
@@ -104,9 +109,9 @@ class ScrimView(discord.ui.View):
             )
             return False
 
-        if not interaction.user.guild_permissions.create_public_threads:
+        if not can_manage(interaction.user):
             await interaction.response.send_message(
-                "You need the **Create Public Threads** permission.",
+                "You need Administrator or Manage Messages permission.",
                 ephemeral=True
             )
             return False
@@ -190,16 +195,28 @@ class Scrims(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def cog_check(self, ctx):
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage()
+        if can_manage(ctx.author):
+            return True
+        raise commands.MissingPermissions(["manage_messages"])
+
+    async def cog_command_error(self, ctx, error):
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(
+                "You need Administrator or Manage Messages permission to use this."
+            )
+        elif isinstance(error, commands.NoPrivateMessage):
+            await ctx.send("This command can only be used in a server.")
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(f"Slow down, try again in {error.retry_after:.0f}s.")
+        else:
+            await ctx.send(f"Something went wrong: {error}")
+
     @commands.command()
-    @commands.guild_only()
     @commands.cooldown(1, 30, commands.BucketType.user)
     async def scrim(self, ctx):
-        if not ctx.author.guild_permissions.create_public_threads:
-            await ctx.send(
-                "You need the **Create Public Threads** permission to use this command."
-            )
-            return
-
         view = ScrimView(ctx.author.id)
         message = await ctx.send(
             "To create a scrim, pick a channel and click the button below",

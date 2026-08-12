@@ -4,6 +4,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from pathlib import Path
+from prefixes import resolve_prefix
 import os
 import asyncio
 
@@ -26,7 +27,7 @@ intents.members = True
 intents.presences = True
 
 bot = commands.Bot(
-    command_prefix=",",
+    command_prefix=resolve_prefix,
     intents=intents,
     allowed_mentions=discord.AllowedMentions(
         everyone=False, roles=False, users=True
