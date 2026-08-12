@@ -1,5 +1,28 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
+import time
+import uuid
+
+from prefixes import prefix_of
+from scheduling import (
+    REPEAT_CHOICES,
+    describe_when,
+    next_occurrence,
+    now_in,
+    parse_when,
+    repeat_label,
+    set_timezone,
+    tz_name,
+    validate_when,
+)
+from storage import Store
+
+_schedule_store = Store("scheduled.json", default=list)
+scheduled = _schedule_store.load()
+
+CHECK_SECONDS = 20
+LATE_GRACE_HOURS = 6
+MAX_PER_GUILD = 25
 
 SEND_MODES = [
     ("text", "Plain text", "A normal message. No embed."),
@@ -53,6 +76,8 @@ def new_draft():
         "image_url": None,
         "thumbnail_url": None,
         "pings": False,
+        "when": None,
+        "repeat": "none",
     }
 
 
@@ -73,6 +98,14 @@ def build_payload(draft):
         embed.set_thumbnail(url=draft["thumbnail_url"])
 
     return None, embed
+
+
+def save_scheduled():
+    _schedule_store.save(scheduled)
+
+
+def guild_schedules(guild_id):
+    return [job for job in scheduled if job["guild_id"] == guild_id]
 
 
 def draft_problems(draft, guild, author):
@@ -194,6 +227,88 @@ class ModeSelect(discord.ui.Select):
         await self.builder.refresh()
 
 
+class ScheduleModal(discord.ui.Modal, title="Schedule Message"):
+    def __init__(self, builder):
+        super().__init__()
+        self.builder = builder
+        self.f_when = discord.ui.TextInput(
+            label="When",
+            placeholder="2h30m, 9pm, tomorrow 8am, friday 18:00, 2026-08-20 14:30",
+            max_length=60,
+            required=True,
+        )
+        self.add_item(self.f_when)
+
+    async def on_submit(self, interaction):
+        target, error = parse_when(self.f_when.value, interaction.guild.id)
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+            return
+
+        problem = validate_when(target, interaction.guild.id)
+        if problem:
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        self.builder.draft["when"] = target.timestamp()
+        await self.builder.refresh()
+
+
+class RepeatSelect(discord.ui.Select):
+    def __init__(self, builder):
+        self.builder = builder
+        current = builder.draft.get("repeat", "none")
+        options = [
+            discord.SelectOption(
+                label=label, value=key, description=blurb, default=(key == current)
+            )
+            for key, label, blurb in REPEAT_CHOICES
+        ]
+        super().__init__(placeholder="How often?", options=options, row=0)
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        self.builder.draft["repeat"] = self.values[0]
+        await self.builder.refresh()
+
+
+class ScheduleView(discord.ui.View):
+    def __init__(self, builder):
+        super().__init__(timeout=300)
+        self.builder = builder
+        self.add_item(RepeatSelect(builder))
+
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.builder.ctx.author.id
+
+    def blurb(self):
+        draft = self.builder.draft
+        zone = tz_name(self.builder.ctx.guild.id)
+
+        if draft.get("when"):
+            line = f"Scheduled for {describe_when(draft['when'])}"
+        else:
+            line = "No time set yet."
+
+        return (
+            f"{line}\n"
+            f"Repeat: **{repeat_label(draft.get('repeat', 'none'))}**\n"
+            f"Server timezone: `{zone}`"
+        )
+
+    @discord.ui.button(label="Set Time", style=discord.ButtonStyle.primary, row=1)
+    async def set_time(self, interaction, button):
+        await interaction.response.send_modal(ScheduleModal(self.builder))
+
+    @discord.ui.button(label="Clear Time", style=discord.ButtonStyle.secondary, row=1)
+    async def clear_time(self, interaction, button):
+        await interaction.response.defer()
+        self.builder.draft["when"] = None
+        self.builder.draft["repeat"] = "none"
+        await self.builder.refresh()
+
+
 class SendBuilderView(discord.ui.View):
     def __init__(self, ctx):
         super().__init__(timeout=600)
@@ -239,10 +354,18 @@ class SendBuilderView(discord.ui.View):
 
         preview = body if len(body) <= 200 else body[:200] + "..."
 
+        if draft.get("when"):
+            timing = describe_when(draft["when"])
+            if draft.get("repeat", "none") != "none":
+                timing += f", {repeat_label(draft['repeat']).lower()}"
+        else:
+            timing = "immediately"
+
         lines = [
             f"**Sending to** - {channel.mention if channel else 'not set'}",
             f"**Style** - {mode_label(draft['mode'])}",
             f"**Pings** - {'allowed' if draft['pings'] else 'blocked'}",
+            f"**When** - {timing}",
             "",
             "**Content**",
             preview,
@@ -297,7 +420,14 @@ class SendBuilderView(discord.ui.View):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    @discord.ui.button(label="Allow Pings", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Schedule", style=discord.ButtonStyle.secondary, row=2)
+    async def open_schedule(self, interaction, button):
+        view = ScheduleView(self)
+        await interaction.response.send_message(
+            view.blurb(), view=view, ephemeral=True
+        )
+
+    @discord.ui.button(label="Allow Pings", style=discord.ButtonStyle.secondary, row=3)
     async def toggle_pings(self, interaction, button):
         if not interaction.user.guild_permissions.mention_everyone:
             await interaction.response.send_message(
@@ -316,7 +446,7 @@ class SendBuilderView(discord.ui.View):
         )
         await self.refresh()
 
-    @discord.ui.button(label="Send", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label="Send", style=discord.ButtonStyle.success, row=3)
     async def send(self, interaction, button):
         problems = draft_problems(self.draft, interaction.guild, interaction.user)
         if problems:
@@ -326,6 +456,49 @@ class SendBuilderView(discord.ui.View):
             return
 
         channel = interaction.guild.get_channel(self.draft["channel_id"])
+
+        if self.draft.get("when"):
+            if len(guild_schedules(interaction.guild.id)) >= MAX_PER_GUILD:
+                await interaction.response.send_message(
+                    f"This server already has {MAX_PER_GUILD} scheduled messages.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.response.defer()
+
+            job = {
+                "id": uuid.uuid4().hex[:8],
+                "guild_id": interaction.guild.id,
+                "channel_id": channel.id,
+                "author_id": interaction.user.id,
+                "when": self.draft["when"],
+                "repeat": self.draft.get("repeat", "none"),
+                "draft": dict(self.draft),
+            }
+            scheduled.append(job)
+            save_scheduled()
+
+            for item in self.children:
+                item.disabled = True
+
+            if self.message:
+                try:
+                    await self.message.edit(
+                        content=(
+                            f"Scheduled for {channel.mention} at "
+                            f"{describe_when(job['when'])}. "
+                            f"Cancel it with `{prefix_of(interaction)}scheduled`."
+                        ),
+                        embed=self.status_embed(),
+                        view=self,
+                    )
+                except discord.HTTPException:
+                    pass
+
+            self.stop()
+            return
+
         content, embed = build_payload(self.draft)
 
         if self.draft["pings"]:
@@ -366,9 +539,120 @@ class SendBuilderView(discord.ui.View):
         self.stop()
 
 
+class CancelSelect(discord.ui.Select):
+    def __init__(self, ctx, jobs):
+        self.ctx = ctx
+        options = []
+        for job in jobs[:25]:
+            channel = ctx.guild.get_channel(job["channel_id"])
+            where = channel.name if channel else "missing channel"
+            options.append(
+                discord.SelectOption(
+                    label=f"{job['id']} to {where}"[:100],
+                    value=job["id"],
+                    description=repeat_label(job.get("repeat", "none")),
+                )
+            )
+        super().__init__(
+            placeholder="Cancel which one?",
+            options=options or [discord.SelectOption(label="none", value="none")],
+            disabled=not options,
+            max_values=min(len(options), 25) or 1,
+        )
+
+    async def callback(self, interaction):
+        removed = 0
+        for job_id in self.values:
+            for job in list(scheduled):
+                if job["id"] == job_id and job["guild_id"] == interaction.guild.id:
+                    scheduled.remove(job)
+                    removed += 1
+
+        if removed:
+            save_scheduled()
+
+        for item in self.view.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(
+            content=f"Cancelled {removed} scheduled message(s).", view=self.view
+        )
+
+
+class CancelView(discord.ui.View):
+    def __init__(self, ctx, jobs):
+        super().__init__(timeout=120)
+        self.ctx = ctx
+        self.add_item(CancelSelect(ctx, jobs))
+
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.ctx.author.id
+
+
 class Send(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.dispatch_due.start()
+
+    def cog_unload(self):
+        self.dispatch_due.cancel()
+
+    @tasks.loop(seconds=CHECK_SECONDS)
+    async def dispatch_due(self):
+        now = time.time()
+        due = [job for job in scheduled if job["when"] <= now]
+        if not due:
+            return
+
+        changed = False
+
+        for job in due:
+            late_by = now - job["when"]
+            guild = self.bot.get_guild(job["guild_id"])
+            channel = guild.get_channel(job["channel_id"]) if guild else None
+
+            skip = (
+                guild is None
+                or channel is None
+                or late_by > LATE_GRACE_HOURS * 3600
+            )
+
+            if not skip:
+                draft = job["draft"]
+                content, embed = build_payload(draft)
+
+                if draft.get("pings"):
+                    mentions = discord.AllowedMentions(
+                        everyone=True, roles=True, users=True
+                    )
+                else:
+                    mentions = discord.AllowedMentions.none()
+
+                try:
+                    await channel.send(
+                        content=content, embed=embed, allowed_mentions=mentions
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    skip = True
+
+            following = next_occurrence(
+                job["when"], job.get("repeat", "none"), job["guild_id"]
+            )
+
+            if following is None:
+                if job in scheduled:
+                    scheduled.remove(job)
+            else:
+                job["when"] = following
+
+            changed = True
+
+        if changed:
+            save_scheduled()
+
+    @dispatch_due.before_loop
+    async def before_dispatch(self):
+        await self.bot.wait_until_ready()
 
     async def cog_check(self, ctx):
         if ctx.guild is None:
@@ -417,6 +701,54 @@ class Send(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         view.message = message
+
+
+    @commands.command(name="scheduled", aliases=["schedules"])
+    async def scheduled_list(self, ctx):
+        jobs = sorted(guild_schedules(ctx.guild.id), key=lambda j: j["when"])
+
+        if not jobs:
+            await ctx.send(
+                f"Nothing scheduled. Use `{prefix_of(ctx)}send` and press Schedule."
+            )
+            return
+
+        lines = []
+        for job in jobs:
+            channel = ctx.guild.get_channel(job["channel_id"])
+            where = channel.mention if channel else "missing channel"
+            repeat = job.get("repeat", "none")
+            suffix = f" - {repeat_label(repeat).lower()}" if repeat != "none" else ""
+            lines.append(
+                f"`{job['id']}` to {where} at {describe_when(job['when'])}{suffix}"
+            )
+
+        embed = discord.Embed(
+            title="Scheduled Messages",
+            description="\n".join(lines),
+            color=discord.Color.dark_theme(),
+        )
+        embed.set_footer(text=f"Server timezone: {tz_name(ctx.guild.id)}")
+
+        await ctx.send(
+            embed=embed,
+            view=CancelView(ctx, jobs),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    @commands.command(name="timezone", aliases=["tz"])
+    async def timezone_command(self, ctx, *, name: str = None):
+        if name is None:
+            current = now_in(ctx.guild.id)
+            await ctx.send(
+                f"Server timezone is `{tz_name(ctx.guild.id)}`, currently "
+                f"{current.strftime('%H:%M on %A')}. Change it with "
+                f"`{prefix_of(ctx)}timezone Asia/Manila`."
+            )
+            return
+
+        ok, message = set_timezone(ctx.guild.id, name.strip())
+        await ctx.send(message)
 
 
 async def setup(bot):
