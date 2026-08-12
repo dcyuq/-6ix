@@ -15,6 +15,9 @@ CATEGORY_META = {
     "Send": "Post a message or embed to a channel as the bot.",
     "Purge": "Bulk delete messages, optionally filtered.",
     "Prefix": "View or change the command prefix for this server.",
+    "Autorole": "Give roles automatically when someone joins.",
+    "Roles": "Add or remove roles from members.",
+    "Welcome": "Greet joiners and announce leavers.",
     "Help": "This menu.",
 }
 
@@ -33,11 +36,18 @@ COMMAND_HELP = {
     "unvanity": "Disable the vanity status role.",
     "ticketsetup": "Set up or reconfigure the ticket system.",
     "ticketstats": "Show open, unclaimed and lifetime ticket counts.",
-    "send": "Post a message or embed to a channel as the bot.",
+    "send": "Post a message or embed now, or schedule it for later.",
     "purge": "Bulk delete messages in this channel.",
     "purgehelp": "Show the purge filters and examples.",
     "prefix": "Show the current command prefix.",
     "help": "Show this menu.",
+    "scheduled": "List and cancel scheduled messages.",
+    "timezone": "View or change the server timezone.",
+    "autorole": "Configure roles given on join.",
+    "role": "Add or remove a role from a member.",
+    "welcome": "Configure the welcome message.",
+    "goodbye": "Configure the leave message.",
+    "prefix": "View or change the command prefix.",
 }
 
 SUBCOMMAND_HELP = {

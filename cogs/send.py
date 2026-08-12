@@ -5,16 +5,23 @@ import uuid
 
 from prefixes import prefix_of
 from scheduling import (
+    COMMON_ZONES,
+    QUICK_OFFSETS,
     REPEAT_CHOICES,
+    build_datetime,
     describe_when,
+    local_now_text,
     next_occurrence,
     now_in,
     parse_when,
     repeat_label,
     set_timezone,
+    tz_for,
     tz_name,
+    upcoming_days,
     validate_when,
 )
+import datetime
 from storage import Store
 
 _schedule_store = Store("scheduled.json", default=list)
@@ -227,85 +234,169 @@ class ModeSelect(discord.ui.Select):
         await self.builder.refresh()
 
 
-class ScheduleModal(discord.ui.Modal, title="Schedule Message"):
-    def __init__(self, builder):
-        super().__init__()
-        self.builder = builder
-        self.f_when = discord.ui.TextInput(
-            label="When",
-            placeholder="2h30m, 9pm, tomorrow 8am, friday 18:00, 2026-08-20 14:30",
-            max_length=60,
-            required=True,
-        )
-        self.add_item(self.f_when)
+class QuickTimeSelect(discord.ui.Select):
+    def __init__(self, panel):
+        self.panel = panel
+        options = [
+            discord.SelectOption(label=label, value=str(minutes))
+            for minutes, label in QUICK_OFFSETS
+        ]
+        super().__init__(placeholder="Quick pick", options=options, row=0)
 
-    async def on_submit(self, interaction):
-        target, error = parse_when(self.f_when.value, interaction.guild.id)
-        if error:
-            await interaction.response.send_message(error, ephemeral=True)
-            return
-
-        problem = validate_when(target, interaction.guild.id)
-        if problem:
-            await interaction.response.send_message(problem, ephemeral=True)
-            return
-
+    async def callback(self, interaction):
         await interaction.response.defer()
-        self.builder.draft["when"] = target.timestamp()
-        await self.builder.refresh()
+        minutes = int(self.values[0])
+        target = now_in(interaction.guild.id) + datetime.timedelta(minutes=minutes)
+        self.panel.builder.draft["when"] = target.timestamp()
+        await self.panel.update(interaction)
+
+
+class DaySelect(discord.ui.Select):
+    def __init__(self, panel):
+        self.panel = panel
+        options = []
+        for day in upcoming_days(panel.builder.ctx.guild.id, 25):
+            options.append(
+                discord.SelectOption(
+                    label=day.strftime("%a %d %b %Y"),
+                    value=day.isoformat(),
+                    default=(day == panel.chosen_day),
+                )
+            )
+        super().__init__(placeholder="Pick a date", options=options, row=1)
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        self.panel.chosen_day = datetime.date.fromisoformat(self.values[0])
+        await self.panel.apply(interaction)
+
+
+class HourSelect(discord.ui.Select):
+    def __init__(self, panel):
+        self.panel = panel
+        options = []
+        for hour in range(24):
+            suffix = "am" if hour < 12 else "pm"
+            twelve = hour % 12 or 12
+            options.append(
+                discord.SelectOption(
+                    label=f"{hour:02d}:00  ({twelve}{suffix})",
+                    value=str(hour),
+                    default=(hour == panel.chosen_hour),
+                )
+            )
+        super().__init__(placeholder="Pick an hour", options=options, row=2)
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        self.panel.chosen_hour = int(self.values[0])
+        await self.panel.apply(interaction)
+
+
+class MinuteSelect(discord.ui.Select):
+    def __init__(self, panel):
+        self.panel = panel
+        options = [
+            discord.SelectOption(
+                label=f"{minute:02d} past",
+                value=str(minute),
+                default=(minute == panel.chosen_minute),
+            )
+            for minute in (0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+        ]
+        super().__init__(placeholder="Pick minutes", options=options, row=3)
+
+    async def callback(self, interaction):
+        await interaction.response.defer()
+        self.panel.chosen_minute = int(self.values[0])
+        await self.panel.apply(interaction)
 
 
 class RepeatSelect(discord.ui.Select):
-    def __init__(self, builder):
-        self.builder = builder
-        current = builder.draft.get("repeat", "none")
+    def __init__(self, panel):
+        self.panel = panel
+        current = panel.builder.draft.get("repeat", "none")
         options = [
             discord.SelectOption(
                 label=label, value=key, description=blurb, default=(key == current)
             )
             for key, label, blurb in REPEAT_CHOICES
         ]
-        super().__init__(placeholder="How often?", options=options, row=0)
+        super().__init__(placeholder="How often?", options=options, row=4)
 
     async def callback(self, interaction):
         await interaction.response.defer()
-        self.builder.draft["repeat"] = self.values[0]
-        await self.builder.refresh()
+        self.panel.builder.draft["repeat"] = self.values[0]
+        await self.panel.update(interaction)
 
 
-class ScheduleView(discord.ui.View):
+class SchedulePanel(discord.ui.View):
     def __init__(self, builder):
         super().__init__(timeout=300)
         self.builder = builder
-        self.add_item(RepeatSelect(builder))
+
+        guild_id = builder.ctx.guild.id
+        soon = now_in(guild_id) + datetime.timedelta(hours=1)
+
+        existing = builder.draft.get("when")
+        if existing:
+            soon = datetime.datetime.fromtimestamp(existing, tz_for(guild_id))
+
+        self.chosen_day = soon.date()
+        self.chosen_hour = soon.hour
+        self.chosen_minute = (soon.minute // 5) * 5
+
+        self.add_item(QuickTimeSelect(self))
+        self.add_item(DaySelect(self))
+        self.add_item(HourSelect(self))
+        self.add_item(MinuteSelect(self))
+        self.add_item(RepeatSelect(self))
 
     async def interaction_check(self, interaction):
         return interaction.user.id == self.builder.ctx.author.id
 
     def blurb(self):
+        guild_id = self.builder.ctx.guild.id
         draft = self.builder.draft
-        zone = tz_name(self.builder.ctx.guild.id)
+        zone = tz_name(guild_id)
 
         if draft.get("when"):
-            line = f"Scheduled for {describe_when(draft['when'])}"
+            line = f"**Sending** {describe_when(draft['when'])}"
         else:
-            line = "No time set yet."
+            line = "**No time set yet.** Use Quick pick, or set date and time below."
 
         return (
             f"{line}\n"
             f"Repeat: **{repeat_label(draft.get('repeat', 'none'))}**\n"
-            f"Server timezone: `{zone}`"
+            f"Timezone: `{zone}` - it is {local_now_text(guild_id)} there now."
         )
 
-    @discord.ui.button(label="Set Time", style=discord.ButtonStyle.primary, row=1)
-    async def set_time(self, interaction, button):
-        await interaction.response.send_modal(ScheduleModal(self.builder))
+    async def apply(self, interaction):
+        """Rebuild the timestamp from the three pickers."""
+        guild_id = interaction.guild.id
+        target, error = build_datetime(
+            guild_id,
+            self.chosen_day.year,
+            self.chosen_day.month,
+            self.chosen_day.day,
+            self.chosen_hour,
+            self.chosen_minute,
+        )
 
-    @discord.ui.button(label="Clear Time", style=discord.ButtonStyle.secondary, row=1)
-    async def clear_time(self, interaction, button):
-        await interaction.response.defer()
-        self.builder.draft["when"] = None
-        self.builder.draft["repeat"] = "none"
+        if error:
+            await interaction.followup.send(error, ephemeral=True)
+            return
+
+        problem = validate_when(target, guild_id)
+        if problem:
+            await interaction.followup.send(problem, ephemeral=True)
+            return
+
+        self.builder.draft["when"] = target.timestamp()
+        await self.update(interaction)
+
+    async def update(self, interaction):
+        await interaction.edit_original_response(content=self.blurb(), view=self)
         await self.builder.refresh()
 
 
@@ -422,9 +513,9 @@ class SendBuilderView(discord.ui.View):
 
     @discord.ui.button(label="Schedule", style=discord.ButtonStyle.secondary, row=2)
     async def open_schedule(self, interaction, button):
-        view = ScheduleView(self)
+        panel = SchedulePanel(self)
         await interaction.response.send_message(
-            view.blurb(), view=view, ephemeral=True
+            panel.blurb(), view=panel, ephemeral=True
         )
 
     @discord.ui.button(label="Allow Pings", style=discord.ButtonStyle.secondary, row=3)
@@ -589,6 +680,38 @@ class CancelView(discord.ui.View):
         return interaction.user.id == self.ctx.author.id
 
 
+class TimezoneSelect(discord.ui.Select):
+    def __init__(self, ctx):
+        self.ctx = ctx
+        current = tz_name(ctx.guild.id)
+        options = [
+            discord.SelectOption(
+                label=nice, value=key, description=key, default=(key == current)
+            )
+            for key, nice in COMMON_ZONES
+        ]
+        super().__init__(placeholder="Pick your timezone", options=options)
+
+    async def callback(self, interaction):
+        ok, message = set_timezone(interaction.guild.id, self.values[0])
+        for item in self.view.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content=f"{message} It is {local_now_text(interaction.guild.id)} there now.",
+            view=self.view,
+        )
+
+
+class TimezoneView(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=120)
+        self.ctx = ctx
+        self.add_item(TimezoneSelect(ctx))
+
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.ctx.author.id
+
+
 class Send(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -738,17 +861,17 @@ class Send(commands.Cog):
 
     @commands.command(name="timezone", aliases=["tz"])
     async def timezone_command(self, ctx, *, name: str = None):
-        if name is None:
-            current = now_in(ctx.guild.id)
-            await ctx.send(
-                f"Server timezone is `{tz_name(ctx.guild.id)}`, currently "
-                f"{current.strftime('%H:%M on %A')}. Change it with "
-                f"`{prefix_of(ctx)}timezone Asia/Manila`."
-            )
+        if name:
+            ok, message = set_timezone(ctx.guild.id, name.strip())
+            await ctx.send(message)
             return
 
-        ok, message = set_timezone(ctx.guild.id, name.strip())
-        await ctx.send(message)
+        await ctx.send(
+            f"Timezone is `{tz_name(ctx.guild.id)}`, currently "
+            f"{local_now_text(ctx.guild.id)}. Pick another below, or type "
+            f"`{prefix_of(ctx)}timezone Area/City` for one not listed.",
+            view=TimezoneView(ctx),
+        )
 
 
 async def setup(bot):

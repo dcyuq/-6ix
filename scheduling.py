@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from storage import Store
 
-DEFAULT_TZ = "UTC"
+DEFAULT_TZ = "Asia/Manila"
 MIN_LEAD_SECONDS = 30
 MAX_LEAD_DAYS = 365
 
@@ -52,6 +52,35 @@ WEEKDAYS = {
     "sunday": 6,
     "sun": 6,
 }
+
+COMMON_ZONES = [
+    ("Asia/Manila", "Manila (Philippines)"),
+    ("Asia/Hong_Kong", "Hong Kong"),
+    ("Asia/Singapore", "Singapore"),
+    ("Asia/Tokyo", "Tokyo"),
+    ("Asia/Kolkata", "India"),
+    ("Asia/Dubai", "Dubai"),
+    ("Europe/London", "London"),
+    ("Europe/Berlin", "Berlin"),
+    ("Europe/Moscow", "Moscow"),
+    ("America/New_York", "New York"),
+    ("America/Chicago", "Chicago"),
+    ("America/Denver", "Denver"),
+    ("America/Los_Angeles", "Los Angeles"),
+    ("America/Sao_Paulo", "Sao Paulo"),
+    ("Australia/Sydney", "Sydney"),
+    ("Pacific/Auckland", "Auckland"),
+    ("UTC", "UTC"),
+]
+
+QUICK_OFFSETS = [
+    (15, "In 15 minutes"),
+    (60, "In 1 hour"),
+    (180, "In 3 hours"),
+    (360, "In 6 hours"),
+    (720, "In 12 hours"),
+    (1440, "Tomorrow, same time"),
+]
 
 REPEAT_CHOICES = [
     ("none", "Once", "Send it a single time, then forget it."),
@@ -228,6 +257,29 @@ def repeat_label(repeat):
         if key == repeat:
             return label
     return "Once"
+
+
+def build_datetime(guild_id, year, month, day, hour, minute):
+    """Assemble a local datetime from picker parts. Returns (dt, error)."""
+    zone = tz_for(guild_id)
+
+    try:
+        naive = datetime.datetime(year, month, day, hour, minute)
+    except ValueError:
+        return None, f"{year}-{month:02d}-{day:02d} isn't a real date."
+
+    return naive.replace(tzinfo=zone), None
+
+
+def upcoming_days(guild_id, count=25):
+    """The next N dates in guild local time, for a picker."""
+    today = datetime.datetime.now(tz_for(guild_id)).date()
+    return [today + datetime.timedelta(days=i) for i in range(count)]
+
+
+def local_now_text(guild_id):
+    moment = datetime.datetime.now(tz_for(guild_id))
+    return moment.strftime("%a %d %b, %H:%M")
 
 
 def describe_when(timestamp):
