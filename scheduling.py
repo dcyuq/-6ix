@@ -259,6 +259,62 @@ def repeat_label(repeat):
     return "Once"
 
 
+DATE_ONLY_FORMATS = (
+    "%Y-%m-%d",
+    "%Y/%m/%d",
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+    "%d %b %Y",
+    "%b %d %Y",
+    "%d %b",
+    "%b %d",
+)
+
+
+def parse_date_only(raw, guild_id):
+    """Read a typed date. Returns (date, error)."""
+    if not raw or not raw.strip():
+        return None, "Give me a date."
+
+    text = " ".join(raw.strip().split())
+    today = datetime.datetime.now(tz_for(guild_id)).date()
+
+    if text.lower() == "today":
+        return today, None
+    if text.lower() == "tomorrow":
+        return today + datetime.timedelta(days=1), None
+
+    for fmt in DATE_ONLY_FORMATS:
+        try:
+            parsed = datetime.datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+        if "%Y" not in fmt:
+            parsed = parsed.replace(year=today.year)
+            if parsed < today:
+                parsed = parsed.replace(year=today.year + 1)
+        return parsed, None
+
+    return None, (
+        f"`{text}` isn't a date I can read. Try `2026-08-20`, `20/08/2026`, "
+        "`Aug 20`, `today` or `tomorrow`."
+    )
+
+
+def parse_time_only(raw):
+    """Read a typed clock time. Returns ((hour, minute), error)."""
+    if not raw or not raw.strip():
+        return None, "Give me a time."
+
+    parts = clock_parts(raw)
+    if parts is None:
+        return None, (
+            f"`{raw.strip()}` isn't a time I can read. Try `14:30`, `2:30pm`, "
+            "`9am` or `21:00`."
+        )
+    return parts, None
+
+
 def build_datetime(guild_id, year, month, day, hour, minute):
     """Assemble a local datetime from picker parts. Returns (dt, error)."""
     zone = tz_for(guild_id)
